@@ -1,44 +1,131 @@
-<p align="center">
-  <img src="https://raw.githubusercontent.com/cert-manager/cert-manager/d53c0b9270f8cd90d908460d69502694e1838f5f/logo/logo-small.png" height="256" width="256" alt="cert-manager project logo" />
-</p>
+# Cert-Manager: DNSMadeEasy DNS-01 Webhook
 
-# ACME webhook example
+- k8s 1.30+
+- go 1.22
+- alpine 3.19
+- supports testing against DME sandbox API
 
-The ACME issuer type supports an optional 'webhook' solver, which can be used
-to implement custom DNS01 challenge solving logic.
+## Credentials
 
-This is useful if you need to use cert-manager with a DNS provider that is not
-officially supported in cert-manager core.
+### Storage
 
-## Why not in core?
+I'm not a big fan of duplicating DNS API credentials into vanilla kubernetes secrets and widening the webhook service account RBAC. As such, this webhook is scaffolded to optionally inject secrets as environment variables from an azure vault using [AKV2K8S](https://akv2k8s.io/). Other vault services (hashicorp, ...CSPs) are supported with minor chart adjustments.
 
-As the project & adoption has grown, there has been an influx of DNS provider
-pull requests to our core codebase. As this number has grown, the test matrix
-has become un-maintainable and so, it's not possible for us to certify that
-providers work to a sufficient level.
+The webhook will first attempt loading credentials from environment variables if `azureKeyVault.enabled`, then attempt retrieving a secret if `secretRef.enabled`. At least one mode should be enabled.
 
-By creating this 'interface' between cert-manager and DNS providers, we allow
-users to quickly iterate and test out new integrations, and then packaging
-those up themselves as 'extensions' to cert-manager.
+#### Vanilla K8S Secrets
 
-We can also then provide a standardised 'testing framework', or set of
-conformance tests, which allow us to validate the a DNS provider works as
-expected.
+Should `secretRef.enabled=true`, issuer config may be defined as:
 
-## Creating your own webhook
+```yaml
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+......
+- dns01:
+    webhook:
+      groupName: acme.example.com
+      solverName: dme
+      config:
+        apiKeyRef:
+          name: dme-credentials
+          key: key
+        apiSecretRef:
+          name: dme-credentials
+          key: secret
+        ttl: 600
+```
 
-Webhook's themselves are deployed as Kubernetes API services, in order to allow
-administrators to restrict access to webhooks with Kubernetes RBAC.
+### External Vault
 
-This is important, as otherwise it'd be possible for anyone with access to your
-webhook to complete ACME challenge validations and obtain certificates.
+Should `azureKeyVault.enabled=true`, chart values should be defined as:
 
-To make the set up of these webhook's easier, we provide a template repository
-that can be used to get started quickly.
+```yaml
+azureKeyVault:
+  # ensure namespace has label: 'azure-key-vault-env-injection: enabled'
+  # https://akv2k8s.io/security/enable-env-injection/
+  enabled: true
+  secrets:
+    apiSecret:
+      vaultName: example-azure-vault
+      vaultObjectName: dme-credentials
+      envVarName: DME_API_SECRET
+      reflect: false
+    apiKey:
+      vaultName: example-azure-vault
+      vaultObjectName: dme-credentials
+      envVarName: DME_API_KEY
+      reflect: false
+```
 
-### Creating your own repository
+... and issuers may be defined as:
 
-### Running the test suite
+```yaml
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+......
+- dns01:
+    webhook:
+      groupName: acme.example.com
+      solverName: dme
+      config:
+        apiKeyenvVar: DME_API_KEY
+        apiSecretenvVar: DME_API_SECRET
+        ttl: 600
+```
+
+### Sharing
+
+Another common design pattern I implement is centered around reflecting TLS secrets. This helps to honor rate-limiting constraints and stay organized:
+
+- define all your certificates in one namespace (typically `cert-manager`)
+- leverage a reflection tool such as [reflector](https://github.com/emberstack/kubernetes-reflector) to mirror TLS secrets across other namespaces for workload consumption
+
+Annotate certificates for reflector:
+
+```yaml
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: star-grug-io-staging
+  namespace: cert-manager
+spec:
+  dnsNames:
+    - "*.grug.io"
+  issuerRef:
+    group: cert-manager.io
+    kind: ClusterIssuer
+    name: example-issuer
+  secretName: star-grug-io-staging-tls
+  secretTemplate:
+    annotations:
+      reflector.v1.k8s.emberstack.com/reflection-allowed: "true"
+      reflector.v1.k8s.emberstack.com/reflection-auto-enabled: "true"
+      reflector.v1.k8s.emberstack.com/reflection-auto-namespaces: sdfhkf2,KH82bs,DHYJgv8
+```
+
+## Quick Setup
+
+populate `./testdata` (see `./testdata/README.md`)
+
+check tests
+
+```bash
+TEST_ZONE_NAME=grug.io. DNS_SERVER=ns1.sandbox.dnsmadeeasy.com:53 DME_BASE_URL=https://api.sandbox.dnsmadeeasy.com/V2.0 make test
+```
+
+build image
+
+```bash
+make build
+```
+
+render & verify helm template
+
+```bash
+make rendered-manifest.yaml
+```
+
+## Running the test suite
 
 All DNS providers **must** run the DNS01 provider conformance testing suite,
 else they will have undetermined behaviour when used with cert-manager.
@@ -46,13 +133,13 @@ else they will have undetermined behaviour when used with cert-manager.
 **It is essential that you configure and run the test suite when creating a
 DNS01 webhook.**
 
-An example Go test file has been provided in [main_test.go](https://github.com/cert-manager/webhook-example/blob/master/main_test.go).
-
 You can run the test suite with:
 
 ```bash
-$ TEST_ZONE_NAME=example.com. make test
+$ TEST_ZONE_NAME=grug.io. DNS_SERVER=ns1.sandbox.dnsmadeeasy.com:53 DME_BASE_URL=https://api.sandbox.dnsmadeeasy.com/V2.0 make test
 ```
 
-The example file has a number of areas you must fill in and replace with your
-own options in order for tests to pass.
+## Logging
+
+- `-v=2` will print basic details on challenges, cleanup, and response status
+- `-v=3` will print debug details including response bodies

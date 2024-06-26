@@ -17,3 +17,5 @@ cert-manager-webhook-example
 # Make artifacts
 _out
 _test
+
+testdata/dme/api-secret.yaml

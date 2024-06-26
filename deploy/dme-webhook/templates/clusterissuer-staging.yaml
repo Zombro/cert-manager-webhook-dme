@@ -1,0 +1,31 @@
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: dme-cluster-issuer-staging
+spec:
+  acme:
+    email: {{ .Values.acmeEmail }}
+    preferredChain: "(STAGING) Pretend Pear X1"
+    privateKeySecretRef:
+      name: dme-cluster-issuer-staging-key
+    server: https://acme-staging-v02.api.letsencrypt.org/directory
+    solvers:
+    - dns01:
+        webhook:
+          groupName: {{ .Values.groupName }}
+          # matches solver.Name()
+          solverName: dme
+          config:
+            {{- if .Values.secretRef.enabled }}
+            apiKeyRef:
+              name: {{ .Values.secretRef.name }}
+              key: key
+            apiSecretRef:
+              name: {{ .Values.secretRef.name }}
+              key: secret
+            {{- end }}
+            {{- if .Values.azureKeyVault.enabled }}
+            apiKeyenvVar: {{ .Values.azureKeyVault.secrets.apiKey.envVarName }}
+            apiSecretenvVar: {{ .Values.azureKeyVault.secrets.apiSecret.envVarName }}
+            {{- end }}
+            ttl: 600

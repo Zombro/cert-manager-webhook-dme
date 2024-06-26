@@ -89,3 +89,31 @@ subjects:
     kind: ServiceAccount
     name: {{ .Values.certManager.serviceAccountName }}
     namespace: {{ .Values.certManager.namespace }}
+
+# ONLY if .Values.secretRef.enabled do we grant secret read permissions
+{{- if .Values.secretRef.enabled }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  namespace: {{ .Release.Namespace }}
+  name: {{ include "example-webhook.fullname" . }}:secret-reader
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "watch", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "example-webhook.fullname" . }}:secret-reader
+  namespace: {{ .Release.Namespace }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "example-webhook.fullname" . }}
+    apiGroup: ""
+roleRef:
+  kind: Role
+  name: {{ include "example-webhook.fullname" . }}:secret-reader
+  apiGroup: rbac.authorization.k8s.io
+{{- end }}

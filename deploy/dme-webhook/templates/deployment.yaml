@@ -21,16 +21,34 @@ spec:
         release: {{ .Release.Name }}
     spec:
       serviceAccountName: {{ include "example-webhook.fullname" . }}
+      imagePullSecrets:
+      {{- .Values.image.pullSecrets | toYaml | nindent 8}}
       containers:
         - name: {{ .Chart.Name }}
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           args:
+            - -v={{ .Values.logging.verbosity }}
             - --tls-cert-file=/tls/tls.crt
             - --tls-private-key-file=/tls/tls.key
           env:
             - name: GROUP_NAME
               value: {{ .Values.groupName | quote }}
+            - name: DME_BASE_URL
+              value: {{ .Values.dmeBaseUrl | quote }}
+            {{- if .Values.azureKeyVault.enabled }}
+              {{- range $s := .Values.azureKeyVault.secrets }}
+            - name: {{ $s.envVarName }}
+                {{- if $s.reflect }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $s.vaultObjectName }}
+                  key: {{ $s.envVarName }}
+                {{- else }}
+              value: {{ $s.vaultObjectName }}@azurekeyvault
+                {{- end }}
+              {{- end }}
+            {{- end }}
           ports:
             - name: https
               containerPort: 443
